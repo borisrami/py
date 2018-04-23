@@ -1,0 +1,207 @@
+from tkinter import *
+import math
+import serial
+############################## F U N C I O N E S #############################################
+#PARA TRANSMISION DE DATOS
+def prepEnvio(x,y,dibujar): #Funcion que crea una lista con datos para enviar al PIC
+    global dim, dimServo
+    data=calcAngulos(x,y)
+    grados=[]
+    ccprl=[]
+    minimosAlfa=[]
+    minimosBeta=[]
+    for i in range (16, 73):
+        ccprl.append(i)
+    for i in range (1,172,3):
+        grados.append(i)
+    mapeoServo={}
+    for i in range (len(ccprl)):
+        mapeoServo[grados[i]]=ccprl[i]
+        minimosAlfa.append(abs(grados[i]-data[0]))
+        minimosBeta.append(abs(grados[i]-data[1]))
+    data[0]=mapeoServo[grados[minimosAlfa.index(min(minimosAlfa))]]
+    data[1]=mapeoServo[grados[minimosBeta.index(min(minimosBeta))]]
+    print ("MAPEOSERVO=" + str(mapeoServo))
+
+        
+    envio=[]                    #Lista para trasmitir
+    envio.append(245)           #245 bandera de inicio CAMBIO
+    envio.append(data[0])       #ccprl para alfa
+    envio.append(data[1])       #ccprl para beta
+    if dibujar==1:
+        envio.append(1)         #dib=1 para colocar el marcador y dibujar
+    else:
+        envio.append(0)         #dib=0, marcador arriba. No dibuja
+    envio.append(255)           #255 bandera de fin CAMBIO
+    return envio
+    
+    
+def calcAngulos(x, y): #Funcion para obtenr alfa y beta
+    a=12                    #Tamano del brazo en cm
+    angulos=[]              #Lista con [245,alfa, beta]. 245 bandera de inicio
+    a=float(a)
+    x=float(x)
+    y=float(y)
+
+    print ("\n RESULTADOS")
+    theta = math.atan(y/x)         #Calculos
+    print ("Theta = "+str(theta))
+    b= math.sqrt((x*x)+(y*y))
+    print ("b = "+str(b))
+    print ("2a = " +str(2*a))
+    print ("b/2a = "+str(b/float(2*a)))
+    phi= math.acos(b/float(2*a))
+    print ("phi = "+str(phi))
+    alfa= int(math.degrees(theta+phi))
+    print ("alfa = "+str(alfa)+" grados")
+    beta=(2*a*a)-b*b
+    beta=beta/(2*a*a)
+    beta=int(math.degrees(math.acos(beta)))
+    print ("beta = "+str(beta)+" grados")
+    angulos.append(alfa)
+    angulos.append(beta)
+    return angulos
+
+def mapear(dominio, rango): #Funcion para mapear de un dominio a otro
+    mapa={}
+    mapeo=1
+    cont=0
+    intervalo=int(dominio/float(rango-1)) #Para obtener el rango
+    for i in range (dominio+1):
+        if cont==intervalo:
+            mapeo=mapeo+1
+            cont=0
+        mapa[i]=mapeo
+        cont=cont+1
+    return mapa
+
+def funSerial(val1):#Funcion para enviar datos mediante conexion serial
+    ser = serial.Serial('COM3', baudrate = 9600, parity = serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE, bytesize = serial.EIGHTBITS)
+    for i in range(0,1):
+        ser.write(chr(val1))
+        ser.close()
+        ser.open()
+        
+#PARA DIBUJAR
+def main():
+    global root
+    drawing_area = Canvas(root, bg="white", width=dim, height= dim)
+    drawing_area.pack()
+    drawing_area.bind("<Motion>", motion)
+    drawing_area.bind("<ButtonPress-1>", b1down)
+    drawing_area.bind("<ButtonRelease-1>", b1up)
+    drawing_area.bind('<Double-1>', sendData)
+    tkMessageBox.showinfo("Envio de Datos", "Al terminar su dibujo, enviar los datos con DOBLE CLICK")
+    root.mainloop()
+def sendData(event):#Doble click
+    print ("DOBLE CLICK")
+    for i in dibujo:
+        if i not in coordenadas:
+            coordenadas.append(i)
+    print ("Coordenadas del dibujo: "+str(coordenadas))
+
+    for i in coordenadas:
+        datos=prepEnvio(i[0],i[1],i[2])
+        print ("DATOS= "+str(datos))
+        paquete.append(datos)
+
+    for i in paquete:
+        print ("PAQUETE "+str(i))
+
+    for prueba in paquete:
+        for dato in prueba:
+            print ("Dato a enviar: "+str(prueba))
+            funSerial(dato)
+            print ("ENVIANDO: "+str(prueba))
+    print ("FIN")
+    
+def b1down(event):#Mouse presionado
+    global b1
+    b1 = ("down") 
+
+def b1up(event): #Mouse liberado
+    global b1, xold, yold, primera
+    b1 = ("up")
+    primera=True
+
+def motion(event):
+    global xold, yold, mapaCanvas, primera, coordenadas, intervalo, prevDib
+    punto=[]
+    if b1 == ("down"):
+        if xold is not None and yold is not None:
+            #Dibujando:
+            event.widget.create_line(xold,yold,event.x,event.y,smooth=TRUE, width=intervalo)
+                    
+        xold = event.x
+        yold = event.y
+
+        if yold>dim:
+            yold=dim
+        if xold>dim:
+            xold=dim
+        if yold<1:
+            yold=1
+        if xold<1:
+            xold=1
+            
+        equis=mapaCanvas[xold]
+        ye=mapaCanvas[yold]
+
+        ynormal=[]
+        yinvertida=[]
+        mapearY={}
+        for c in range (1,17):
+            mapearY[c]=17-c
+
+        ye=mapearY[ye]
+        
+        if primera==True:
+            punto=[equis, ye, 0]
+            dibujo.append(punto)
+            primera=False
+        else:
+            if prevDib == False:
+                punto = [puntotemp[0],puntotemp[1],0]
+                dibujo.append(punto)
+        punto = [equis,ye,1]
+        puntotemp=punto
+        dibujo.append(punto)
+        prevDib = True
+        print ("x: "+str(equis)+" y: "+str(ye))
+    else:
+        prevDib = False
+        try:
+            equis=mapaCanvas[xold]
+            ye=mapaCanvas[yold]
+            punto=[equis, ye, 0]
+            #puntotemp=[puntotemp[0], puntotemp[1], 0]
+            dibujo.append(punto)
+            xold = None     #Se limpian las variables para poder "levantar el lapiz"
+            yold = None
+        except:
+            pass
+        
+######################### P R O G R A M A   F U E N T E #############################
+#Datos
+root = Tk()
+root.title("PROYECTO 2")
+dim=400         #dimensiones de canvas de 320*320
+dimServo=16     #dimensiones area dibujo del servo 16*16
+intervalo=int(dim/float(dimServo)) #Para obtener el rango
+b1 = "up"
+primera=True
+prevDib = False
+xold, yold = None, None
+dibujo=[]       #contiene todas las coordenadas del dibujo
+coordenadas=[]  #contiene las coordenadas del dibujo sin repeticiones
+datos=[]        #[245,alfa, beta, dib, 255]. 245 bandera inic, angulos, dib indicador de dibujo o no, 255 bandera fin.
+paquete=[]      #el conjunto de todos los datos a enviar
+x=0             #Coordenadas
+y=0
+
+mapaCanvas=mapear(dim, dimServo)    #Escalando canvas
+print (mapaCanvas)
+     
+#Se crea el dibujo y se guardan las coordenadas
+if __name__ == "__main__":
+    main()
