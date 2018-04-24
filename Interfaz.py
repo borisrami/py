@@ -1,4 +1,5 @@
 from tkinter import *
+from tkinter import messagebox
 import math
 import serial
 ############################## F U N C I O N E S #############################################
@@ -6,33 +7,34 @@ import serial
 def prepEnvio(x,y,dibujar): #Funcion que crea una lista con datos para enviar al PIC
     global dim, dimServo
     data=calcAngulos(x,y)
-    grados=[]
-    ccprl=[]
-    minimosAlfa=[]
-    minimosBeta=[]
-    for i in range (16, 73):
-        ccprl.append(i)
-    for i in range (1,172,3):
-        grados.append(i)
-    mapeoServo={}
-    for i in range (len(ccprl)):
-        mapeoServo[grados[i]]=ccprl[i]
-        minimosAlfa.append(abs(grados[i]-data[0]))
-        minimosBeta.append(abs(grados[i]-data[1]))
-    data[0]=mapeoServo[grados[minimosAlfa.index(min(minimosAlfa))]]
-    data[1]=mapeoServo[grados[minimosBeta.index(min(minimosBeta))]]
-    print ("MAPEOSERVO=" + str(mapeoServo))
-
-        
+    
     envio=[]                    #Lista para trasmitir
-    envio.append(245)           #245 bandera de inicio CAMBIO
-    envio.append(data[0])       #ccprl para alfa
-    envio.append(data[1])       #ccprl para beta
-    if dibujar==1:
-        envio.append(1)         #dib=1 para colocar el marcador y dibujar
-    else:
-        envio.append(0)         #dib=0, marcador arriba. No dibuja
-    envio.append(255)           #255 bandera de fin CAMBIO
+    chkme=[]
+    envio.append(0xBB)          #245 bandera de inicio CAMBIO
+    envio.append(0x44)          #245 bandera de inicio CAMBIO
+    envio.append(0x11)          # 0x11 es el OPCODE para ABSMOVE
+    chkme.append(0x11)
+    envio.append(0x01)          # ARGS = 0x01
+    chkme.append(0x01)
+    envio.append(0x03)          # ARGS = 0x03
+    chkme.append(0x03)
+    envio.append(data[0])       # El primer argumento para ABSMOVE es alfa
+    chkme.append(data[0])
+    envio.append(data[1])       # El segundo argumento para ABSMOVE es beta
+    chkme.append(data[1])
+    if dibujar==1:              # El tercer argumento para ABSMOVE es 0x01 si se va a dibuar
+        envio.append(1)
+        chkme.append(1)
+    else:                       # o 0x00 si no se va a dibujar
+        envio.append(0)
+        chkme.append(0)
+    checksum = 0x00;
+    for i in chkme:
+        checksum += i
+    print("CHECKSUM para la trama: "+format(checksum&0xFF, "#04x"))
+    envio.append(checksum&0xFF)
+    envio.append(0xAA)
+    envio.append(0x55)
     return envio
     
     
@@ -45,22 +47,31 @@ def calcAngulos(x, y): #Funcion para obtenr alfa y beta
 
     print ("\n RESULTADOS")
     theta = math.atan(y/x)         #Calculos
-    print ("Theta = "+str(theta))
+    print ("Theta = "+str(theta)+" rads")
     b= math.sqrt((x*x)+(y*y))
-    print ("b = "+str(b))
-    print ("2a = " +str(2*a))
-    print ("b/2a = "+str(b/float(2*a)))
+    print ("b = "+str(b)+" cm")
+    print ("2a = " +str(2*a)+" cm")
+    print ("b/2a = "+str(b/float(2*a))+" cm")
     phi= math.acos(b/float(2*a))
-    print ("phi = "+str(phi))
+    print ("phi = "+str(phi)+" rads")
     alfa= int(math.degrees(theta+phi))
     print ("alfa = "+str(alfa)+" grados")
     beta=(2*a*a)-b*b
     beta=beta/(2*a*a)
     beta=int(math.degrees(math.acos(beta)))
     print ("beta = "+str(beta)+" grados")
+    # Puede ser que venga de 0 a 35 o bien de 35 a 70
+    alfa = int(maprange((0, 180), (0, 70), alfa))
+    print ("alfa mapea a = "+str(alfa))
+    beta = int(maprange((0, 180), (0, 70), beta))
+    print ("beta mapea a = "+str(beta))
     angulos.append(alfa)
     angulos.append(beta)
     return angulos
+
+def maprange(a, b, s):
+    (a1, a2), (b1, b2) = a, b
+    return  b1 + ((s - a1) * (b2 - b1) / (a2 - a1))
 
 def mapear(dominio, rango): #Funcion para mapear de un dominio a otro
     mapa={}
@@ -76,11 +87,10 @@ def mapear(dominio, rango): #Funcion para mapear de un dominio a otro
     return mapa
 
 def funSerial(val1):#Funcion para enviar datos mediante conexion serial
-    ser = serial.Serial('COM3', baudrate = 9600, parity = serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE, bytesize = serial.EIGHTBITS)
-    for i in range(0,1):
-        ser.write(chr(val1))
-        ser.close()
-        ser.open()
+    #ser = serial.Serial('/dev/tty.usbserial-00000000', baudrate = 50000, parity = serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE, bytesize = serial.EIGHTBITS)
+    with serial.Serial('/dev/ttys001') as ser:
+        ser.write(val1)
+        print ("Escrito byte "+format(val1, "#010x")+" en el puerto "+ser.port+" a "+str(ser.baudrate)+" bps")
         
 #PARA DIBUJAR
 def main():
@@ -91,15 +101,17 @@ def main():
     drawing_area.bind("<ButtonPress-1>", b1down)
     drawing_area.bind("<ButtonRelease-1>", b1up)
     drawing_area.bind('<Double-1>', sendData)
-    tkMessageBox.showinfo("Envio de Datos", "Al terminar su dibujo, enviar los datos con DOBLE CLICK")
+    messagebox.showinfo("Envio de Datos", "Al terminar su dibujo, enviar los datos con DOBLE CLICK")
     root.mainloop()
 def sendData(event):#Doble click
     print ("DOBLE CLICK")
+    budprinted = 0
+    coordenadas = []
     for i in dibujo:
         if i not in coordenadas:
             coordenadas.append(i)
     print ("Coordenadas del dibujo: "+str(coordenadas))
-
+    paquete=[]
     for i in coordenadas:
         datos=prepEnvio(i[0],i[1],i[2])
         print ("DATOS= "+str(datos))
@@ -108,11 +120,21 @@ def sendData(event):#Doble click
     for i in paquete:
         print ("PAQUETE "+str(i))
 
+    set_auto = [0xBB, 0x44, 0x10, 0x00, 0x10, 0xAA, 0x55]
+    print("Trama a enviar "+str([format(i, "#04x") for i in set_auto])+" manual->auto")
+    for dato in set_auto:
+        funSerial(dato)
+
     for prueba in paquete:
+        print("Trama a enviar "+str([format(i, "#04x") for i in prueba]))
         for dato in prueba:
-            print ("Dato a enviar: "+str(prueba))
             funSerial(dato)
-            print ("ENVIANDO: "+str(prueba))
+
+    set_manual = [0xBB, 0x44, 0x12, 0x00, 0x12, 0xAA, 0x55]
+    print("Trama a enviar "+str([format(i, "#04x") for i in set_manual])+" auto->manual")
+    for dato in set_manual:
+        funSerial(dato)
+
     print ("FIN")
     
 def b1down(event):#Mouse presionado
@@ -205,3 +227,4 @@ print (mapaCanvas)
 #Se crea el dibujo y se guardan las coordenadas
 if __name__ == "__main__":
     main()
+
